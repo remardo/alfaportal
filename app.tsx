@@ -25,7 +25,7 @@ import {
 type DragCell = { rowId: number; dayIndex: number };
 type ObjectDraft = SecurityObject;
 type PostInstruction = { post: string; instruction: string };
-type ShiftSlotEditorState = { rowId: number; dayIndex: number; objectName: string } | null;
+type ShiftSlotEditorState = { rowId: number; dayIndex: number; place: string } | null;
 const defaultObjectTypes = ['Бизнес-центр', 'Торговый центр', 'Жилой комплекс', 'Промзона'];
 const EXPIRING_DAYS_THRESHOLD = 30;
 const khoAmmoReserveBase = 1250;
@@ -145,6 +145,7 @@ export default function AlphaPortal() {
   const [manualShiftType, setManualShiftType] = useState<ShiftType>('day');
   const [shiftSlotEditor, setShiftSlotEditor] = useState<ShiftSlotEditorState>(null);
   const [scheduleSlotObjects, setScheduleSlotObjects] = useState<Record<string, string>>({});
+  const [schedulePrintDayIndex, setSchedulePrintDayIndex] = useState(0);
   const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getWeekStartMonday(new Date()));
   const [scheduleObjectFilter, setScheduleObjectFilter] = useState<string>('all');
   const [scheduleSearchFilter, setScheduleSearchFilter] = useState('');
@@ -222,11 +223,11 @@ export default function AlphaPortal() {
     setScheduleSlotObjects((prev) => {
       const next = { ...prev };
       schedule.forEach((row) => {
-        const defaultObject = extractObjectNameFromPost(row.post);
+        const defaultPlace = row.post || 'Резерв';
         for (let i = 0; i < weekDays.length; i += 1) {
           const key = getSlotKey(row.id, i);
-          if (!next[key]) {
-            next[key] = defaultObject;
+          if (!(key in next)) {
+            next[key] = defaultPlace;
           }
         }
       });
@@ -305,9 +306,8 @@ export default function AlphaPortal() {
     );
     setScheduleSlotObjects((prev) => {
       const next = { ...prev };
-      const slotObjectName = extractObjectNameFromPost(normalizedPlace);
       for (let i = 0; i < weekDays.length; i += 1) {
-        next[getSlotKey(scheduleRow.id, i)] = slotObjectName;
+        next[getSlotKey(scheduleRow.id, i)] = normalizedPlace;
       }
       return next;
     });
@@ -341,7 +341,7 @@ export default function AlphaPortal() {
     setScheduleSlotObjects((prev) => {
       const next = { ...prev };
       for (let i = 0; i < weekDays.length; i += 1) {
-        next[getSlotKey(scheduleRow.id, i)] = selectedOption.objectName;
+        next[getSlotKey(scheduleRow.id, i)] = selectedOption.label;
       }
       return next;
     });
@@ -1075,16 +1075,16 @@ export default function AlphaPortal() {
 
   const openShiftSlotEditor = (rowId: number, dayIndex: number) => {
     const row = schedule.find((item) => item.id === rowId);
-    const fallbackObject = row ? extractObjectNameFromPost(row.post) : 'Резерв';
-    const currentObject = scheduleSlotObjects[getSlotKey(rowId, dayIndex)] ?? fallbackObject;
-    setShiftSlotEditor({ rowId, dayIndex, objectName: currentObject });
+    const fallbackPlace = row ? row.post : 'Резерв';
+    const currentPlace = scheduleSlotObjects[getSlotKey(rowId, dayIndex)] ?? fallbackPlace;
+    setShiftSlotEditor({ rowId, dayIndex, place: currentPlace });
   };
 
   const applyShiftToSlot = (shiftType: ShiftType) => {
     if (!shiftSlotEditor) {
       return;
     }
-    if (shiftType !== 'off' && !shiftSlotEditor.objectName.trim()) {
+    if (shiftType !== 'off' && !shiftSlotEditor.place.trim()) {
       showToast('Укажите объект/место для слота');
       return;
     }
@@ -1101,7 +1101,7 @@ export default function AlphaPortal() {
     setScheduleSlotObjects((prev) => ({
       ...prev,
       [getSlotKey(shiftSlotEditor.rowId, shiftSlotEditor.dayIndex)]:
-        shiftType === 'off' ? '' : shiftSlotEditor.objectName,
+        shiftType === 'off' ? '' : shiftSlotEditor.place,
     }));
     setShiftSlotEditor(null);
     showToast('Смена обновлена');
@@ -1167,6 +1167,59 @@ export default function AlphaPortal() {
     const timestamp = new Date().toLocaleString('ru-RU');
     setPublishedAt(timestamp);
     showToast('Табель опубликован');
+  };
+
+  const formatShiftForReport = (shift: ShiftType) => {
+    if (shift === 'day') return 'День 08:00-20:00';
+    if (shift === 'night') return 'Ночь 20:00-08:00';
+    if (shift === '24h') return 'Сутки 24ч';
+    return 'Выходной';
+  };
+
+  const printDailyScheduleReport = () => {
+    const day = scheduleWeekDays[schedulePrintDayIndex];
+    if (!day) return;
+    const rows = filteredSchedule
+      .map((row) => {
+        const shift = row.shifts[schedulePrintDayIndex];
+        if (!shift || shift === 'off') return null;
+        const place = scheduleSlotObjects[getSlotKey(row.id, schedulePrintDayIndex)] || row.post;
+        return {
+          employee: row.name,
+          place,
+          shiftLabel: formatShiftForReport(shift),
+        };
+      })
+      .filter((row): row is { employee: string; place: string; shiftLabel: string } => Boolean(row));
+
+    const htmlRows = rows
+      .map(
+        (row) =>
+          `<tr><td>${row.employee}</td><td>${row.place}</td><td>${row.shiftLabel}</td></tr>`
+      )
+      .join('');
+
+    const html = `<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Дневной табель</title><style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}
+      h1{margin:0 0 8px;font-size:20px}p{margin:0 0 16px;color:#475569}
+      table{width:100%;border-collapse:collapse}th,td{border:1px solid #e2e8f0;padding:8px;text-align:left;font-size:13px}
+      th{background:#f8fafc}
+    </style></head><body>
+      <h1>Дневной табель-сводка для начальника</h1>
+      <p>Дата: ${day.day} ${day.date} | Сформировано: ${new Date().toLocaleString('ru-RU')}</p>
+      <table><thead><tr><th>Сотрудник</th><th>Пост/место</th><th>Смена</th></tr></thead><tbody>${htmlRows || '<tr><td colspan="3">Смены не назначены</td></tr>'}</tbody></table>
+    </body></html>`;
+
+    const win = window.open('', '_blank', 'noopener,noreferrer');
+    if (!win) {
+      showToast('Браузер заблокировал печать');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
   };
 
   return (
@@ -1825,6 +1878,23 @@ export default function AlphaPortal() {
                     >
                       Опубликовать табель
                     </button>
+                    <div className="flex items-center space-x-2">
+                      <select
+                        value={schedulePrintDayIndex}
+                        onChange={(event) => setSchedulePrintDayIndex(Number(event.target.value))}
+                        className="px-2 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl font-semibold text-sm"
+                      >
+                        {scheduleWeekDays.map((day, index) => (
+                          <option key={index} value={index}>{day.day} {day.date}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={printDailyScheduleReport}
+                        className="px-4 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-md hover:bg-slate-700 transition-colors"
+                      >
+                        Печать дневной сводки
+                      </button>
+                    </div>
                   </div>
                 </div>
                 {publishedAt && (
@@ -1904,7 +1974,7 @@ export default function AlphaPortal() {
                             >
                               {renderShiftBadge(
                                 shift,
-                                scheduleSlotObjects[getSlotKey(emp.id, idx)] ?? extractObjectNameFromPost(emp.post),
+                                scheduleSlotObjects[getSlotKey(emp.id, idx)] ?? emp.post,
                                 {
                                 draggable: shift !== 'off',
                                 onDragStart: () => onShiftDragStart(emp.id, idx),
@@ -2689,41 +2759,41 @@ export default function AlphaPortal() {
               {scheduleWeekDays[shiftSlotEditor.dayIndex]?.day} {scheduleWeekDays[shiftSlotEditor.dayIndex]?.date}
             </p>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
-              Объект на слоте
+              Пост/место охраны на слоте
               <select
                 value={
-                  scheduleObjectOptions.includes(shiftSlotEditor.objectName) ||
-                  shiftSlotEditor.objectName === 'Резерв'
-                    ? shiftSlotEditor.objectName
+                  schedulePostOptions.some((option) => option.label === shiftSlotEditor.place) ||
+                  shiftSlotEditor.place === 'Резерв'
+                    ? shiftSlotEditor.place
                     : '__custom__'
                 }
                 onChange={(event) =>
                   setShiftSlotEditor((prev) => {
                     if (!prev) return prev;
                     if (event.target.value === '__custom__') {
-                      return { ...prev, objectName: '' };
+                      return { ...prev, place: '' };
                     }
-                    return { ...prev, objectName: event.target.value };
+                    return { ...prev, place: event.target.value };
                   })
                 }
                 className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700"
               >
                 <option value="Резерв">Резерв</option>
-                {scheduleObjectOptions.map((objectName) => (
-                  <option key={objectName} value={objectName}>{objectName}</option>
+                {schedulePostOptions.map((option) => (
+                  <option key={option.value} value={option.label}>{option.label}</option>
                 ))}
-                <option value="__custom__">Свой объект...</option>
+                <option value="__custom__">Свой пост/место...</option>
               </select>
             </label>
-            {!(scheduleObjectOptions.includes(shiftSlotEditor.objectName) || shiftSlotEditor.objectName === 'Резерв') && (
+            {!(schedulePostOptions.some((option) => option.label === shiftSlotEditor.place) || shiftSlotEditor.place === 'Резерв') && (
               <input
-                value={shiftSlotEditor.objectName}
+                value={shiftSlotEditor.place}
                 onChange={(event) =>
                   setShiftSlotEditor((prev) =>
-                    prev ? { ...prev, objectName: event.target.value } : prev
+                    prev ? { ...prev, place: event.target.value } : prev
                   )
                 }
-                placeholder="Введите объект/место охраны"
+                placeholder="Введите пост/место охраны"
                 className="mb-3 w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-700"
               />
             )}
