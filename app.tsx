@@ -1192,7 +1192,7 @@ export default function AlphaPortal() {
 
                 {/* ВСПЛЫВАЮЩАЯ ПАНЕЛЬ ДЕТАЛЕЙ (Справа) */}
                 {selectedEmployee && (
-                  <div className="w-80 absolute top-0 right-0 h-full bg-white border border-slate-100 shadow-2xl rounded-3xl p-6 flex flex-col transform transition-transform duration-300 z-20">
+                  <div className="w-[22rem] max-w-[calc(100vw-1rem)] absolute top-0 right-0 h-full bg-white border border-slate-100 shadow-2xl rounded-3xl p-6 flex flex-col transform transition-transform duration-300 z-20">
                     <div className="flex justify-between items-start mb-6">
                       <div>
                         <h3 className="text-xl font-bold text-slate-800 leading-tight pr-4">{selectedEmployee.name}</h3>
@@ -1206,7 +1206,7 @@ export default function AlphaPortal() {
                       </button>
                     </div>
 
-                    <div className="space-y-6 flex-1 overflow-auto">
+                    <div className="space-y-6 flex-1 overflow-auto overflow-x-hidden pr-1">
                       {/* Сводка */}
                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                         <div className="flex items-center justify-between mb-2">
@@ -1239,7 +1239,7 @@ export default function AlphaPortal() {
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3 min-w-0">
                         <p className="text-xs text-slate-500 font-semibold uppercase">Смены сотрудника</p>
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div className="bg-white border border-slate-200 rounded-lg p-2">
@@ -1258,12 +1258,12 @@ export default function AlphaPortal() {
 
                         <div className="space-y-2">
                           {weekDays.map((day, dayIndex) => (
-                            <div key={dayIndex} className="flex items-center justify-between gap-2">
+                            <div key={dayIndex} className="flex items-center justify-between gap-2 min-w-0">
                               <span className="text-xs font-semibold text-slate-500 w-14">{day.day} {day.date}</span>
                               <select
                                 value={selectedEmployeeSchedule?.shifts[dayIndex] ?? 'off'}
                                 onChange={(event) => setProfileShift(selectedEmployee, dayIndex, event.target.value as ShiftType)}
-                                className="flex-1 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
+                                className="flex-1 min-w-0 w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
                               >
                                 <option value="off">Выходной</option>
                                 <option value="day">День (08:00-20:00)</option>
@@ -1276,11 +1276,11 @@ export default function AlphaPortal() {
 
                         <div className="pt-2 border-t border-slate-200/70">
                           <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold mb-2">Ручное добавление смены</p>
-                          <div className="flex gap-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <select
                               value={manualShiftDayIndex}
                               onChange={(event) => setManualShiftDayIndex(Number(event.target.value))}
-                              className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
+                              className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 min-w-0"
                             >
                               {weekDays.map((day, dayIndex) => (
                                 <option key={dayIndex} value={dayIndex}>{day.day} {day.date}</option>
@@ -1289,7 +1289,7 @@ export default function AlphaPortal() {
                             <select
                               value={manualShiftType}
                               onChange={(event) => setManualShiftType(event.target.value as ShiftType)}
-                              className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
+                              className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 min-w-0"
                             >
                               <option value="day">День</option>
                               <option value="night">Ночь</option>
@@ -1298,7 +1298,7 @@ export default function AlphaPortal() {
                             </select>
                             <button
                               onClick={() => addManualShiftForEmployee(selectedEmployee)}
-                              className="px-2 py-1 text-xs font-bold bg-[#FF7657] text-white rounded-lg hover:bg-[#e8664a]"
+                              className="px-2 py-1 text-xs font-bold bg-[#FF7657] text-white rounded-lg hover:bg-[#e8664a] whitespace-nowrap"
                             >
                               Добавить
                             </button>
