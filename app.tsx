@@ -28,6 +28,7 @@ type PostInstruction = { post: string; instruction: string };
 const defaultObjectTypes = ['Бизнес-центр', 'Торговый центр', 'Жилой комплекс', 'Промзона'];
 const EXPIRING_DAYS_THRESHOLD = 30;
 const khoAmmoReserveBase = 1250;
+type ScheduleTemplate = '2/2 день' | '2/2 ночь' | 'сутки/двое' | '5/2 день';
 
 type KhoWeapon = {
   id: string;
@@ -51,6 +52,28 @@ const initialKhoWeapons: KhoWeapon[] = [
   { id: 'pr-73-12', label: 'ПР-73 (№ 12)', inKho: true, issuedToEmployeeId: null, issuedAmmo: 0, lastIssuedAt: null },
   { id: 'pr-73-15', label: 'ПР-73 (№ 15)', inKho: true, issuedToEmployeeId: null, issuedAmmo: 0, lastIssuedAt: null },
 ];
+
+const buildTemplateShifts = (template: ScheduleTemplate): ShiftType[] => {
+  switch (template) {
+    case '2/2 день':
+      return ['day', 'day', 'off', 'off', 'day', 'day', 'off'];
+    case '2/2 ночь':
+      return ['night', 'night', 'off', 'off', 'night', 'night', 'off'];
+    case 'сутки/двое':
+      return ['24h', 'off', 'off', '24h', 'off', 'off', '24h'];
+    case '5/2 день':
+    default:
+      return ['day', 'day', 'day', 'day', 'day', 'off', 'off'];
+  }
+};
+
+const toScheduleShortName = (fullName: string) => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return fullName;
+  if (parts.length === 1) return parts[0];
+  const initials = parts.slice(1).map((part) => `${part[0]}.`).join('');
+  return `${parts[0]} ${initials}`;
+};
 
 const shiftHoursMap: Record<ShiftType, number> = {
   day: 12,
@@ -102,6 +125,32 @@ export default function AlphaPortal() {
   const [khoForm, setKhoForm] = useState({ employeeId: '', weaponId: '', ammo: '16' });
   const [khoFilterQuery, setKhoFilterQuery] = useState('');
   const [showKhoArchive, setShowKhoArchive] = useState(false);
+  const [isEmployeeCreateOpen, setIsEmployeeCreateOpen] = useState(false);
+  const [newEmployeeDraft, setNewEmployeeDraft] = useState({
+    name: '',
+    phone: '',
+    weapon: 'Без оружия',
+    licenseDate: '',
+    medCheck: '',
+    periodicCheckDate: '',
+    objectId: '',
+    postName: '',
+    addToSchedule: true,
+    scheduleTemplate: '2/2 день' as ScheduleTemplate,
+  });
+  const [postAssignments, setPostAssignments] = useState<Record<number, Record<string, number | null>>>(() => {
+    const initial: Record<number, Record<string, number | null>> = {};
+    mockObjects.forEach((objectItem) => {
+      initial[objectItem.id] = {};
+      objectItem.posts.forEach((postName) => {
+        const matchedEmployee = mockEmployees.find(
+          (employee) => employee.post.includes(objectItem.name) && employee.post.includes(postName)
+        );
+        initial[objectItem.id][postName] = matchedEmployee?.id ?? null;
+      });
+    });
+    return initial;
+  });
 
   const filteredEmployees = useMemo(() => {
     const employeeRepository = new InMemoryEmployeeRepository(employees);
@@ -145,6 +194,32 @@ export default function AlphaPortal() {
   const showToast = (message: string) => {
     setToastMessage(message);
   };
+
+  useEffect(() => {
+    setPostAssignments((prev) => {
+      const next: Record<number, Record<string, number | null>> = {};
+      objects.forEach((objectItem) => {
+        const prevObjectAssignments = prev[objectItem.id] ?? {};
+        next[objectItem.id] = {};
+        objectItem.posts.forEach((postName) => {
+          const assignedEmployeeId = prevObjectAssignments[postName] ?? null;
+          const hasEmployee = assignedEmployeeId ? employees.some((employee) => employee.id === assignedEmployeeId) : true;
+          next[objectItem.id][postName] = hasEmployee ? assignedEmployeeId : null;
+        });
+      });
+      return next;
+    });
+  }, [objects, employees]);
+
+  const objectPostOptions = useMemo(() => {
+    return objects.flatMap((objectItem) =>
+      objectItem.posts.map((postName) => ({
+        objectId: objectItem.id,
+        objectName: objectItem.name,
+        postName,
+      }))
+    );
+  }, [objects]);
 
   const getDateDiffInDays = (date: string) => {
     const target = new Date(date);
@@ -490,6 +565,99 @@ export default function AlphaPortal() {
     }
     setProfileDraft({ ...selectedEmployee });
     setIsProfileEditOpen(true);
+  };
+
+  const openCreateEmployeeModal = () => {
+    const firstOption = objectPostOptions[0];
+    const today = new Date();
+    const plusMonths = (months: number) => {
+      const d = new Date(today);
+      d.setMonth(d.getMonth() + months);
+      return d.toISOString().slice(0, 10);
+    };
+    setNewEmployeeDraft({
+      name: '',
+      phone: '',
+      weapon: 'Без оружия',
+      licenseDate: plusMonths(12),
+      medCheck: plusMonths(6),
+      periodicCheckDate: plusMonths(6),
+      objectId: firstOption ? String(firstOption.objectId) : '',
+      postName: firstOption?.postName ?? '',
+      addToSchedule: true,
+      scheduleTemplate: '2/2 день',
+    });
+    setIsEmployeeCreateOpen(true);
+  };
+
+  const createEmployee = () => {
+    const normalizedName = newEmployeeDraft.name.trim();
+    const normalizedPhone = newEmployeeDraft.phone.trim();
+    if (!normalizedName || !normalizedPhone) {
+      showToast('Укажите ФИО и телефон сотрудника');
+      return;
+    }
+    if (!newEmployeeDraft.licenseDate || !newEmployeeDraft.medCheck || !newEmployeeDraft.periodicCheckDate) {
+      showToast('Заполните даты УЛЧО, 002/003 и периодической проверки');
+      return;
+    }
+
+    const selectedObject = objects.find((objectItem) => objectItem.id === Number(newEmployeeDraft.objectId));
+    const selectedPost = newEmployeeDraft.postName.trim();
+    if (!selectedObject || !selectedPost) {
+      showToast('Выберите объект и пост для назначения');
+      return;
+    }
+
+    const nextEmployeeId = employees.length ? Math.max(...employees.map((employee) => employee.id)) + 1 : 1;
+    const postLabel = `${selectedObject.name} (${selectedPost})`;
+    const replacedEmployeeId = postAssignments[selectedObject.id]?.[selectedPost] ?? null;
+    const createdEmployee: Employee = {
+      id: nextEmployeeId,
+      name: normalizedName,
+      post: postLabel,
+      phone: normalizedPhone,
+      weapon: newEmployeeDraft.weapon.trim() || 'Без оружия',
+      licenseDate: newEmployeeDraft.licenseDate,
+      medCheck: newEmployeeDraft.medCheck,
+      periodicCheckDate: newEmployeeDraft.periodicCheckDate,
+      status: getDocumentStatus(newEmployeeDraft.licenseDate),
+    };
+
+    setEmployees((prev) => {
+      const updated = prev.map((employee) =>
+        employee.id === replacedEmployeeId ? { ...employee, post: 'Резерв' } : employee
+      );
+      return [createdEmployee, ...updated];
+    });
+    setPostAssignments((prev) => ({
+      ...prev,
+      [selectedObject.id]: {
+        ...(prev[selectedObject.id] ?? {}),
+        [selectedPost]: createdEmployee.id,
+      },
+    }));
+
+    if (newEmployeeDraft.addToSchedule) {
+      const shifts = buildTemplateShifts(newEmployeeDraft.scheduleTemplate);
+      const nextScheduleId = schedule.length ? Math.max(...schedule.map((row) => row.id)) + 1 : 1;
+      const scheduleEntry: ScheduleEntry = {
+        id: nextScheduleId,
+        name: toScheduleShortName(createdEmployee.name),
+        post: createdEmployee.post,
+        shifts,
+        hours: calculateHours(shifts),
+      };
+      setSchedule((prev) => [...prev, scheduleEntry]);
+    }
+
+    setSelectedEmployee(createdEmployee);
+    setIsEmployeeCreateOpen(false);
+    showToast(
+      replacedEmployeeId
+        ? `Сотрудник добавлен и назначен вместо текущего на посту`
+        : `Сотрудник добавлен: ${createdEmployee.name}`
+    );
   };
 
   const saveProfile = () => {
@@ -849,6 +1017,15 @@ export default function AlphaPortal() {
                   </div>
                 </div>
 
+                <div className="flex justify-end">
+                  <button
+                    onClick={openCreateEmployeeModal}
+                    className="inline-flex items-center px-4 py-2.5 bg-[#FF7657] text-white rounded-xl font-bold text-sm shadow-md hover:bg-[#e8664a] transition-colors"
+                  >
+                    <Plus className="w-4 h-4 mr-2" /> Добавить сотрудника
+                  </button>
+                </div>
+
                 <div className="flex gap-6 flex-1 relative">
                   {/* ТАБЛИЦА */}
                   <div className={`flex-1 transition-all duration-300 ${selectedEmployee ? 'pr-80' : ''}`}>
@@ -1157,9 +1334,17 @@ export default function AlphaPortal() {
                         </h4>
                         <div className="flex flex-wrap gap-2">
                           {obj.posts.map((post, idx) => (
-                            <span key={idx} className="inline-flex items-center px-3 py-1 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 shadow-sm">
-                              <Shield className="w-3.5 h-3.5 mr-1.5 text-slate-400" /> {post}
-                            </span>
+                            <div key={idx} className="inline-flex items-center px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 shadow-sm">
+                              <Shield className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
+                              <div className="leading-tight">
+                                <div>{post}</div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {postAssignments[obj.id]?.[post]
+                                    ? `Назначен: ${employees.find((employee) => employee.id === postAssignments[obj.id][post])?.name ?? '—'}`
+                                    : 'Не назначен'}
+                                </div>
+                              </div>
+                            </div>
                           ))}
                         </div>
                       </div>
@@ -1602,6 +1787,146 @@ export default function AlphaPortal() {
           </div>
         </div>
       </main>
+
+      {isEmployeeCreateOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl bg-white rounded-3xl border border-slate-100 shadow-2xl p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-slate-800">Новый сотрудник</h3>
+              <button
+                onClick={() => setIsEmployeeCreateOpen(false)}
+                className="p-2 rounded-full hover:bg-slate-100 text-slate-500 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="text-sm font-semibold text-slate-600">
+                ФИО
+                <input
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.name}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Телефон
+                <input
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.phone}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, phone: event.target.value }))}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Оружие / спецсредство
+                <input
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.weapon}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, weapon: event.target.value }))}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                УЛЧО до
+                <input
+                  type="date"
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.licenseDate}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, licenseDate: event.target.value }))}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Справка 002/003 до
+                <input
+                  type="date"
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.medCheck}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, medCheck: event.target.value }))}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Периодическая проверка до
+                <input
+                  type="date"
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.periodicCheckDate}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, periodicCheckDate: event.target.value }))}
+                />
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Объект
+                <select
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.objectId}
+                  onChange={(event) => {
+                    const objectId = event.target.value;
+                    const firstPost = objects.find((objectItem) => String(objectItem.id) === objectId)?.posts[0] ?? '';
+                    setNewEmployeeDraft((prev) => ({ ...prev, objectId, postName: firstPost }));
+                  }}
+                >
+                  <option value="">Выберите объект...</option>
+                  {objects.map((objectItem) => (
+                    <option key={objectItem.id} value={objectItem.id}>
+                      {objectItem.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Пост на объекте
+                <select
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.postName}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, postName: event.target.value }))}
+                >
+                  <option value="">Выберите пост...</option>
+                  {(objects.find((objectItem) => String(objectItem.id) === newEmployeeDraft.objectId)?.posts ?? []).map((postName) => (
+                    <option key={postName} value={postName}>{postName}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-slate-600">
+                Шаблон графика
+                <select
+                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
+                  value={newEmployeeDraft.scheduleTemplate}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, scheduleTemplate: event.target.value as ScheduleTemplate }))}
+                >
+                  <option value="2/2 день">2/2 день</option>
+                  <option value="2/2 ночь">2/2 ночь</option>
+                  <option value="сутки/двое">сутки/двое</option>
+                  <option value="5/2 день">5/2 день</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="mt-4 inline-flex items-center text-sm font-semibold text-slate-600">
+              <input
+                type="checkbox"
+                checked={newEmployeeDraft.addToSchedule}
+                onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, addToSchedule: event.target.checked }))}
+                className="mr-2 rounded border-slate-300 text-[#FF7657] focus:ring-[#FF7657]"
+              />
+              Сразу добавить в график дежурств
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setIsEmployeeCreateOpen(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-semibold hover:bg-slate-200"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={createEmployee}
+                className="px-5 py-2.5 rounded-xl bg-[#FF7657] text-white font-bold hover:bg-[#e8664a]"
+              >
+                Создать сотрудника
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isProfileEditOpen && profileDraft && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 flex items-center justify-center p-4">
