@@ -275,6 +275,56 @@ export default function AlphaPortal() {
     }));
   }, [objectPostOptions]);
 
+  const clearEmployeeAssignments = (employeeId: number) => {
+    setPostAssignments((prev) => {
+      const next: Record<number, Record<string, number | null>> = {};
+      Object.entries(prev).forEach(([objectId, postsMap]) => {
+        next[Number(objectId)] = {};
+        Object.entries(postsMap).forEach(([postName, assignedId]) => {
+          next[Number(objectId)][postName] = assignedId === employeeId ? null : assignedId;
+        });
+      });
+      return next;
+    });
+  };
+
+  const assignScheduleEmployeeToCustomPlace = (scheduleRow: ScheduleEntry, customPlace: string) => {
+    const normalizedPlace = customPlace.trim();
+    if (!normalizedPlace) {
+      return;
+    }
+    const matchedEmployee = employees.find(
+      (employee) => employee.name === scheduleRow.name || toScheduleShortName(employee.name) === scheduleRow.name
+    );
+    setSchedule((prev) =>
+      prev.map((row) =>
+        row.id === scheduleRow.id
+          ? { ...row, employeeId: matchedEmployee?.id ?? row.employeeId, post: normalizedPlace }
+          : row
+      )
+    );
+    setScheduleSlotObjects((prev) => {
+      const next = { ...prev };
+      const slotObjectName = extractObjectNameFromPost(normalizedPlace);
+      for (let i = 0; i < weekDays.length; i += 1) {
+        next[getSlotKey(scheduleRow.id, i)] = slotObjectName;
+      }
+      return next;
+    });
+
+    if (matchedEmployee) {
+      setEmployees((prev) =>
+        prev.map((employee) =>
+          employee.id === matchedEmployee.id ? { ...employee, post: normalizedPlace } : employee
+        )
+      );
+      clearEmployeeAssignments(matchedEmployee.id);
+      showToast(`Назначено произвольное место: ${normalizedPlace}`);
+      return;
+    }
+    showToast(`Место обновлено: ${normalizedPlace}`);
+  };
+
   const assignScheduleEmployeeToPost = (scheduleRow: ScheduleEntry, assignmentValue: string) => {
     const selectedOption = schedulePostOptions.find((option) => option.value === assignmentValue);
     if (!selectedOption) {
@@ -305,13 +355,13 @@ export default function AlphaPortal() {
         employee.id === matchedEmployee.id ? { ...employee, post: nextPostLabel } : employee
       )
     );
-
+    clearEmployeeAssignments(matchedEmployee.id);
     setPostAssignments((prev) => {
       const next: Record<number, Record<string, number | null>> = {};
       Object.entries(prev).forEach(([objectId, postsMap]) => {
         next[Number(objectId)] = {};
         Object.entries(postsMap).forEach(([postName, employeeId]) => {
-          next[Number(objectId)][postName] = employeeId === matchedEmployee.id ? null : employeeId;
+          next[Number(objectId)][postName] = employeeId;
         });
       });
       if (!next[selectedOption.objectId]) {
@@ -1032,6 +1082,10 @@ export default function AlphaPortal() {
 
   const applyShiftToSlot = (shiftType: ShiftType) => {
     if (!shiftSlotEditor) {
+      return;
+    }
+    if (shiftType !== 'off' && !shiftSlotEditor.objectName.trim()) {
+      showToast('Укажите объект/место для слота');
       return;
     }
     setSchedule((prev) =>
@@ -1814,6 +1868,14 @@ export default function AlphaPortal() {
                                     if (event.target.value === '__current__') {
                                       return;
                                     }
+                                    if (event.target.value === '__custom__') {
+                                      const customPlace = window.prompt('Введите произвольное место охраны', emp.post);
+                                      if (!customPlace) {
+                                        return;
+                                      }
+                                      assignScheduleEmployeeToCustomPlace(emp, customPlace);
+                                      return;
+                                    }
                                     assignScheduleEmployeeToPost(emp, event.target.value);
                                   }}
                                   className="mt-1 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-600 max-w-[220px]"
@@ -1826,6 +1888,7 @@ export default function AlphaPortal() {
                                       {option.label}
                                     </option>
                                   ))}
+                                  <option value="__custom__">Произвольное место...</option>
                                 </select>
                               </div>
                             </div>
@@ -2628,11 +2691,20 @@ export default function AlphaPortal() {
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
               Объект на слоте
               <select
-                value={shiftSlotEditor.objectName}
+                value={
+                  scheduleObjectOptions.includes(shiftSlotEditor.objectName) ||
+                  shiftSlotEditor.objectName === 'Резерв'
+                    ? shiftSlotEditor.objectName
+                    : '__custom__'
+                }
                 onChange={(event) =>
-                  setShiftSlotEditor((prev) =>
-                    prev ? { ...prev, objectName: event.target.value } : prev
-                  )
+                  setShiftSlotEditor((prev) => {
+                    if (!prev) return prev;
+                    if (event.target.value === '__custom__') {
+                      return { ...prev, objectName: '' };
+                    }
+                    return { ...prev, objectName: event.target.value };
+                  })
                 }
                 className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700"
               >
@@ -2640,8 +2712,21 @@ export default function AlphaPortal() {
                 {scheduleObjectOptions.map((objectName) => (
                   <option key={objectName} value={objectName}>{objectName}</option>
                 ))}
+                <option value="__custom__">Свой объект...</option>
               </select>
             </label>
+            {!(scheduleObjectOptions.includes(shiftSlotEditor.objectName) || shiftSlotEditor.objectName === 'Резерв') && (
+              <input
+                value={shiftSlotEditor.objectName}
+                onChange={(event) =>
+                  setShiftSlotEditor((prev) =>
+                    prev ? { ...prev, objectName: event.target.value } : prev
+                  )
+                }
+                placeholder="Введите объект/место охраны"
+                className="mb-3 w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-700"
+              />
+            )}
             <div className="grid grid-cols-1 gap-2">
               <button onClick={() => applyShiftToSlot('day')} className="text-left px-3 py-2 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 font-semibold">День (08:00-20:00)</button>
               <button onClick={() => applyShiftToSlot('night')} className="text-left px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700 font-semibold">Ночь (20:00-08:00)</button>
