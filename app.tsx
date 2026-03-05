@@ -25,6 +25,7 @@ import {
 type DragCell = { rowId: number; dayIndex: number };
 type ObjectDraft = SecurityObject;
 type PostInstruction = { post: string; instruction: string };
+type ShiftSlotEditorState = { rowId: number; dayIndex: number } | null;
 const defaultObjectTypes = ['Бизнес-центр', 'Торговый центр', 'Жилой комплекс', 'Промзона'];
 const EXPIRING_DAYS_THRESHOLD = 30;
 const khoAmmoReserveBase = 1250;
@@ -127,6 +128,7 @@ export default function AlphaPortal() {
   const [showKhoArchive, setShowKhoArchive] = useState(false);
   const [manualShiftDayIndex, setManualShiftDayIndex] = useState(0);
   const [manualShiftType, setManualShiftType] = useState<ShiftType>('day');
+  const [shiftSlotEditor, setShiftSlotEditor] = useState<ShiftSlotEditorState>(null);
   const [isEmployeeCreateOpen, setIsEmployeeCreateOpen] = useState(false);
   const [newEmployeeDraft, setNewEmployeeDraft] = useState({
     name: '',
@@ -641,15 +643,16 @@ export default function AlphaPortal() {
   // Функция для рендера бейджа смены (для модуля Графики)
   const renderShiftBadge = (
     shiftType: ShiftType,
-    dragOptions?: { draggable: boolean; onDragStart: () => void; onDragEnd: () => void }
+    dragOptions?: { draggable: boolean; onDragStart: () => void; onDragEnd: () => void; onClick?: () => void }
   ) => {
     const sharedProps = dragOptions?.draggable
       ? {
           draggable: true,
           onDragStart: dragOptions.onDragStart,
           onDragEnd: dragOptions.onDragEnd,
+          onClick: dragOptions.onClick,
         }
-      : {};
+      : { onClick: dragOptions?.onClick };
 
     switch(shiftType) {
       case 'day':
@@ -659,7 +662,7 @@ export default function AlphaPortal() {
       case '24h':
         return <div {...sharedProps} className="flex items-center justify-center w-full h-10 bg-[#FFF0ED] text-[#FF7657] border border-[#FF7657]/20 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-[#FF7657]/20 transition-colors group"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />Сутки (24ч)</div>;
       case 'off':
-        return <div className="flex items-center justify-center w-full h-10 bg-slate-50 text-slate-400 border border-dashed border-slate-200 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-100 hover:text-slate-600 transition-colors">Выходной</div>;
+        return <div {...sharedProps} className="flex items-center justify-center w-full h-10 bg-slate-50 text-slate-400 border border-dashed border-slate-200 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-100 hover:text-slate-600 transition-colors">Выходной</div>;
       default:
         return <div className="w-full h-10 bg-slate-50 rounded-lg"></div>;
     }
@@ -930,6 +933,28 @@ export default function AlphaPortal() {
 
   const onShiftDragStart = (rowId: number, dayIndex: number) => {
     setDraggedCell({ rowId, dayIndex });
+  };
+
+  const openShiftSlotEditor = (rowId: number, dayIndex: number) => {
+    setShiftSlotEditor({ rowId, dayIndex });
+  };
+
+  const applyShiftToSlot = (shiftType: ShiftType) => {
+    if (!shiftSlotEditor) {
+      return;
+    }
+    setSchedule((prev) =>
+      prev.map((row) => {
+        if (row.id !== shiftSlotEditor.rowId) {
+          return row;
+        }
+        const shifts = [...row.shifts];
+        shifts[shiftSlotEditor.dayIndex] = shiftType;
+        return { ...row, shifts, hours: calculateHours(shifts) };
+      })
+    );
+    setShiftSlotEditor(null);
+    showToast('Смена обновлена');
   };
 
   const onShiftDrop = (targetRowId: number, targetDayIndex: number) => {
@@ -1663,6 +1688,7 @@ export default function AlphaPortal() {
                                 draggable: shift !== 'off',
                                 onDragStart: () => onShiftDragStart(emp.id, idx),
                                 onDragEnd: () => setDraggedCell(null),
+                                onClick: () => openShiftSlotEditor(emp.id, idx),
                               })}
                             </td>
                           ))}
@@ -2420,6 +2446,31 @@ export default function AlphaPortal() {
               >
                 Закрыть
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shiftSlotEditor && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-slate-100 shadow-2xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800">Выбор времени дежурства</h3>
+              <button
+                onClick={() => setShiftSlotEditor(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 mb-4">
+              {weekDays[shiftSlotEditor.dayIndex]?.day} {weekDays[shiftSlotEditor.dayIndex]?.date}
+            </p>
+            <div className="grid grid-cols-1 gap-2">
+              <button onClick={() => applyShiftToSlot('day')} className="text-left px-3 py-2 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 font-semibold">День (08:00-20:00)</button>
+              <button onClick={() => applyShiftToSlot('night')} className="text-left px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700 font-semibold">Ночь (20:00-08:00)</button>
+              <button onClick={() => applyShiftToSlot('24h')} className="text-left px-3 py-2 rounded-xl border border-[#FF7657]/20 bg-[#FFF0ED] text-[#FF7657] font-semibold">Сутки (24ч)</button>
+              <button onClick={() => applyShiftToSlot('off')} className="text-left px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Выходной</button>
             </div>
           </div>
         </div>
