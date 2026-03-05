@@ -76,6 +76,15 @@ const toScheduleShortName = (fullName: string) => {
   return `${parts[0]} ${initials}`;
 };
 
+const getWeekStartMonday = (date: Date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+};
+
 const shiftHoursMap: Record<ShiftType, number> = {
   day: 12,
   night: 12,
@@ -129,6 +138,9 @@ export default function AlphaPortal() {
   const [manualShiftDayIndex, setManualShiftDayIndex] = useState(0);
   const [manualShiftType, setManualShiftType] = useState<ShiftType>('day');
   const [shiftSlotEditor, setShiftSlotEditor] = useState<ShiftSlotEditorState>(null);
+  const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getWeekStartMonday(new Date()));
+  const [scheduleObjectFilter, setScheduleObjectFilter] = useState<string>('all');
+  const [scheduleSearchFilter, setScheduleSearchFilter] = useState('');
   const [isEmployeeCreateOpen, setIsEmployeeCreateOpen] = useState(false);
   const [newEmployeeDraft, setNewEmployeeDraft] = useState({
     name: '',
@@ -481,6 +493,48 @@ export default function AlphaPortal() {
     ? selectedEmployeeSchedule.shifts.filter((shift) => shift !== 'off').length
     : 0;
   const selectedEmployeeMonthlyShiftCount = Math.round(selectedEmployeeWeeklyShiftCount * 4.33);
+
+  const scheduleWeekDays = useMemo(() => {
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(scheduleWeekStart);
+      date.setDate(scheduleWeekStart.getDate() + index);
+      const weekday = new Intl.DateTimeFormat('ru-RU', { weekday: 'short' }).format(date);
+      const dayLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1, 2);
+      const dayDate = date.getDate().toString().padStart(2, '0');
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      return { day: dayLabel, date: dayDate, isWeekend };
+    });
+  }, [scheduleWeekStart]);
+
+  const scheduleRangeLabel = useMemo(() => {
+    const end = new Date(scheduleWeekStart);
+    end.setDate(scheduleWeekStart.getDate() + 6);
+    const startLabel = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long' }).format(scheduleWeekStart);
+    const endLabel = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(end);
+    return `${startLabel} - ${endLabel}`;
+  }, [scheduleWeekStart]);
+
+  const scheduleObjectOptions = useMemo(() => {
+    const names = new Set<string>();
+    objects.forEach((objectItem) => names.add(objectItem.name));
+    schedule.forEach((row) => {
+      const objectName = row.post.includes('(') ? row.post.slice(0, row.post.lastIndexOf('(')).trim() : row.post.trim();
+      if (objectName) {
+        names.add(objectName);
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [objects, schedule]);
+
+  const filteredSchedule = useMemo(() => {
+    const q = scheduleSearchFilter.trim().toLowerCase();
+    return schedule.filter((row) => {
+      const objectName = row.post.includes('(') ? row.post.slice(0, row.post.lastIndexOf('(')).trim() : row.post.trim();
+      const objectOk = scheduleObjectFilter === 'all' || objectName === scheduleObjectFilter;
+      const queryOk = !q || row.name.toLowerCase().includes(q) || row.post.toLowerCase().includes(q);
+      return objectOk && queryOk;
+    });
+  }, [schedule, scheduleObjectFilter, scheduleSearchFilter]);
 
   const selectedKhoEmployee = useMemo(() => {
     const employeeId = Number(khoForm.employeeId);
@@ -1585,17 +1639,64 @@ export default function AlphaPortal() {
                 <div className="flex justify-between items-center bg-white p-4 rounded-t-3xl border border-slate-100 border-b-0 shadow-sm z-10">
                   <div className="flex items-center space-x-4">
                     <div className="flex items-center bg-[#F5F6F9] rounded-xl p-1">
-                      <button className="p-1.5 rounded-lg hover:bg-white text-slate-500 hover:shadow-sm transition-all"><ChevronLeft className="w-5 h-5" /></button>
+                      <button
+                        onClick={() =>
+                          setScheduleWeekStart((prev) => {
+                            const d = new Date(prev);
+                            d.setDate(d.getDate() - 7);
+                            return d;
+                          })
+                        }
+                        className="p-1.5 rounded-lg hover:bg-white text-slate-500 hover:shadow-sm transition-all"
+                      >
+                        <ChevronLeft className="w-5 h-5" />
+                      </button>
                       <span className="px-4 font-bold text-slate-700 flex items-center">
                         <CalendarDays className="w-4 h-4 mr-2 text-[#FF7657]" /> 
-                        10 - 16 Ноября 2025
+                        {scheduleRangeLabel}
                       </span>
-                      <button className="p-1.5 rounded-lg hover:bg-white text-slate-500 hover:shadow-sm transition-all"><ChevronRight className="w-5 h-5" /></button>
+                      <button
+                        onClick={() =>
+                          setScheduleWeekStart((prev) => {
+                            const d = new Date(prev);
+                            d.setDate(d.getDate() + 7);
+                            return d;
+                          })
+                        }
+                        className="p-1.5 rounded-lg hover:bg-white text-slate-500 hover:shadow-sm transition-all"
+                      >
+                        <ChevronRight className="w-5 h-5" />
+                      </button>
                     </div>
                     
-                    <button className="flex items-center px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl font-semibold text-sm hover:bg-slate-50 transition-colors">
-                      <Filter className="w-4 h-4 mr-2 text-slate-400" /> Все объекты
+                    <button
+                      onClick={() => setScheduleWeekStart(getWeekStartMonday(new Date()))}
+                      className="flex items-center px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl font-semibold text-sm hover:bg-slate-50 transition-colors"
+                    >
+                      Сегодня
                     </button>
+                    <div className="flex items-center px-3 py-2 bg-white border border-slate-200 rounded-xl">
+                      <Filter className="w-4 h-4 mr-2 text-slate-400" />
+                      <select
+                        value={scheduleObjectFilter}
+                        onChange={(event) => setScheduleObjectFilter(event.target.value)}
+                        className="text-sm font-semibold text-slate-600 bg-transparent outline-none"
+                      >
+                        <option value="all">Все объекты</option>
+                        {scheduleObjectOptions.map((objectName) => (
+                          <option key={objectName} value={objectName}>{objectName}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={scheduleSearchFilter}
+                        onChange={(event) => setScheduleSearchFilter(event.target.value)}
+                        placeholder="Поиск сотрудника/поста"
+                        className="pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 w-56"
+                      />
+                    </div>
                   </div>
 
                   <div className="flex items-center space-x-3">
@@ -1631,7 +1732,7 @@ export default function AlphaPortal() {
                         <th className="p-4 pl-6 w-64 sticky left-0 bg-white z-30 border-r border-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                           Сотрудник / Объект
                         </th>
-                        {weekDays.map((day, idx) => (
+                        {scheduleWeekDays.map((day, idx) => (
                           <th key={idx} className={`p-4 text-center border-r border-slate-50 min-w-[120px] ${day.isWeekend ? 'bg-red-50/50 text-red-400' : 'bg-slate-50/50'}`}>
                             <div className="flex flex-col items-center">
                               <span className="text-[10px] mb-0.5">{day.day}</span>
@@ -1643,7 +1744,7 @@ export default function AlphaPortal() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {schedule.map((emp) => (
+                      {filteredSchedule.map((emp) => (
                         <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors group">
                           <td className="p-4 pl-6 sticky left-0 bg-white group-hover:bg-slate-50/50 z-10 border-r border-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                             <div className="flex items-center">
@@ -1680,7 +1781,7 @@ export default function AlphaPortal() {
                               key={idx}
                               onDragOver={(event) => event.preventDefault()}
                               onDrop={() => onShiftDrop(emp.id, idx)}
-                              className={`p-2 border-r border-slate-50 text-center ${weekDays[idx].isWeekend ? 'bg-red-50/20' : ''} ${
+                              className={`p-2 border-r border-slate-50 text-center ${scheduleWeekDays[idx].isWeekend ? 'bg-red-50/20' : ''} ${
                                 draggedCell ? 'hover:bg-emerald-50/70' : ''
                               }`}
                             >
