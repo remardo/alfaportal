@@ -129,12 +129,10 @@ export default function AlphaPortal() {
   const [newEmployeeDraft, setNewEmployeeDraft] = useState({
     name: '',
     phone: '',
-    weapon: 'Без оружия',
+    weaponId: '',
     licenseDate: '',
     medCheck: '',
     periodicCheckDate: '',
-    objectId: '',
-    postName: '',
     addToSchedule: true,
     scheduleTemplate: '2/2 день' as ScheduleTemplate,
   });
@@ -220,6 +218,11 @@ export default function AlphaPortal() {
       }))
     );
   }, [objects]);
+
+  const availableKhoWeaponsForHiring = useMemo(
+    () => khoWeapons.filter((weapon) => weapon.inKho),
+    [khoWeapons]
+  );
 
   const schedulePostOptions = useMemo(() => {
     return objectPostOptions.map((option) => ({
@@ -620,7 +623,6 @@ export default function AlphaPortal() {
   };
 
   const openCreateEmployeeModal = () => {
-    const firstOption = objectPostOptions[0];
     const today = new Date();
     const plusMonths = (months: number) => {
       const d = new Date(today);
@@ -630,12 +632,10 @@ export default function AlphaPortal() {
     setNewEmployeeDraft({
       name: '',
       phone: '',
-      weapon: 'Без оружия',
+      weaponId: '',
       licenseDate: plusMonths(12),
       medCheck: plusMonths(6),
       periodicCheckDate: plusMonths(6),
-      objectId: firstOption ? String(firstOption.objectId) : '',
-      postName: firstOption?.postName ?? '',
       addToSchedule: true,
       scheduleTemplate: '2/2 день',
     });
@@ -654,41 +654,21 @@ export default function AlphaPortal() {
       return;
     }
 
-    const selectedObject = objects.find((objectItem) => objectItem.id === Number(newEmployeeDraft.objectId));
-    const selectedPost = newEmployeeDraft.postName.trim();
-    if (!selectedObject || !selectedPost) {
-      showToast('Выберите объект и пост для назначения');
-      return;
-    }
-
     const nextEmployeeId = employees.length ? Math.max(...employees.map((employee) => employee.id)) + 1 : 1;
-    const postLabel = `${selectedObject.name} (${selectedPost})`;
-    const replacedEmployeeId = postAssignments[selectedObject.id]?.[selectedPost] ?? null;
+    const selectedWeapon = khoWeapons.find((weapon) => weapon.id === newEmployeeDraft.weaponId);
     const createdEmployee: Employee = {
       id: nextEmployeeId,
       name: normalizedName,
-      post: postLabel,
+      post: 'Резерв',
       phone: normalizedPhone,
-      weapon: newEmployeeDraft.weapon.trim() || 'Без оружия',
+      weapon: selectedWeapon ? selectedWeapon.label : 'Без оружия',
       licenseDate: newEmployeeDraft.licenseDate,
       medCheck: newEmployeeDraft.medCheck,
       periodicCheckDate: newEmployeeDraft.periodicCheckDate,
       status: getDocumentStatus(newEmployeeDraft.licenseDate),
     };
 
-    setEmployees((prev) => {
-      const updated = prev.map((employee) =>
-        employee.id === replacedEmployeeId ? { ...employee, post: 'Резерв' } : employee
-      );
-      return [createdEmployee, ...updated];
-    });
-    setPostAssignments((prev) => ({
-      ...prev,
-      [selectedObject.id]: {
-        ...(prev[selectedObject.id] ?? {}),
-        [selectedPost]: createdEmployee.id,
-      },
-    }));
+    setEmployees((prev) => [createdEmployee, ...prev]);
 
     if (newEmployeeDraft.addToSchedule) {
       const shifts = buildTemplateShifts(newEmployeeDraft.scheduleTemplate);
@@ -705,11 +685,7 @@ export default function AlphaPortal() {
 
     setSelectedEmployee(createdEmployee);
     setIsEmployeeCreateOpen(false);
-    showToast(
-      replacedEmployeeId
-        ? `Сотрудник добавлен и назначен вместо текущего на посту`
-        : `Сотрудник добавлен: ${createdEmployee.name}`
-    );
+    showToast(`Сотрудник добавлен: ${createdEmployee.name}`);
   };
 
   const saveProfile = () => {
@@ -1891,11 +1867,18 @@ export default function AlphaPortal() {
               </label>
               <label className="text-sm font-semibold text-slate-600">
                 Оружие / спецсредство
-                <input
+                <select
                   className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
-                  value={newEmployeeDraft.weapon}
-                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, weapon: event.target.value }))}
-                />
+                  value={newEmployeeDraft.weaponId}
+                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, weaponId: event.target.value }))}
+                >
+                  <option value="">Без оружия</option>
+                  {availableKhoWeaponsForHiring.map((weapon) => (
+                    <option key={weapon.id} value={weapon.id}>
+                      {weapon.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="text-sm font-semibold text-slate-600">
                 УЛЧО до
@@ -1923,38 +1906,6 @@ export default function AlphaPortal() {
                   value={newEmployeeDraft.periodicCheckDate}
                   onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, periodicCheckDate: event.target.value }))}
                 />
-              </label>
-              <label className="text-sm font-semibold text-slate-600">
-                Объект
-                <select
-                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
-                  value={newEmployeeDraft.objectId}
-                  onChange={(event) => {
-                    const objectId = event.target.value;
-                    const firstPost = objects.find((objectItem) => String(objectItem.id) === objectId)?.posts[0] ?? '';
-                    setNewEmployeeDraft((prev) => ({ ...prev, objectId, postName: firstPost }));
-                  }}
-                >
-                  <option value="">Выберите объект...</option>
-                  {objects.map((objectItem) => (
-                    <option key={objectItem.id} value={objectItem.id}>
-                      {objectItem.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-slate-600">
-                Пост на объекте
-                <select
-                  className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-4 py-2.5"
-                  value={newEmployeeDraft.postName}
-                  onChange={(event) => setNewEmployeeDraft((prev) => ({ ...prev, postName: event.target.value }))}
-                >
-                  <option value="">Выберите пост...</option>
-                  {(objects.find((objectItem) => String(objectItem.id) === newEmployeeDraft.objectId)?.posts ?? []).map((postName) => (
-                    <option key={postName} value={postName}>{postName}</option>
-                  ))}
-                </select>
               </label>
               <label className="text-sm font-semibold text-slate-600">
                 Шаблон графика
