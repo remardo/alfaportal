@@ -221,6 +221,58 @@ export default function AlphaPortal() {
     );
   }, [objects]);
 
+  const schedulePostOptions = useMemo(() => {
+    return objectPostOptions.map((option) => ({
+      value: `${option.objectId}::${option.postName}`,
+      label: `${option.objectName} (${option.postName})`,
+      objectId: option.objectId,
+      postName: option.postName,
+    }));
+  }, [objectPostOptions]);
+
+  const assignScheduleEmployeeToPost = (scheduleRow: ScheduleEntry, assignmentValue: string) => {
+    const selectedOption = schedulePostOptions.find((option) => option.value === assignmentValue);
+    if (!selectedOption) {
+      showToast('Выбранный пост не найден');
+      return;
+    }
+    const nextPostLabel = selectedOption.label;
+    setSchedule((prev) =>
+      prev.map((row) => (row.id === scheduleRow.id ? { ...row, post: nextPostLabel } : row))
+    );
+
+    const matchedEmployee = employees.find(
+      (employee) => employee.name === scheduleRow.name || toScheduleShortName(employee.name) === scheduleRow.name
+    );
+    if (!matchedEmployee) {
+      showToast(`Назначение обновлено в графике: ${nextPostLabel}`);
+      return;
+    }
+
+    setEmployees((prev) =>
+      prev.map((employee) =>
+        employee.id === matchedEmployee.id ? { ...employee, post: nextPostLabel } : employee
+      )
+    );
+
+    setPostAssignments((prev) => {
+      const next: Record<number, Record<string, number | null>> = {};
+      Object.entries(prev).forEach(([objectId, postsMap]) => {
+        next[Number(objectId)] = {};
+        Object.entries(postsMap).forEach(([postName, employeeId]) => {
+          next[Number(objectId)][postName] = employeeId === matchedEmployee.id ? null : employeeId;
+        });
+      });
+      if (!next[selectedOption.objectId]) {
+        next[selectedOption.objectId] = {};
+      }
+      next[selectedOption.objectId][selectedOption.postName] = matchedEmployee.id;
+      return next;
+    });
+
+    showToast(`Сотрудник назначен: ${matchedEmployee.name} -> ${nextPostLabel}`);
+  };
+
   const getDateDiffInDays = (date: string) => {
     const target = new Date(date);
     target.setHours(0, 0, 0, 0);
@@ -1451,7 +1503,26 @@ export default function AlphaPortal() {
                               </div>
                               <div>
                                 <p className="font-bold text-slate-800 text-sm">{emp.name}</p>
-                                <p className="text-xs text-slate-400 truncate w-48">{emp.post}</p>
+                                <select
+                                  value={schedulePostOptions.find((option) => option.label === emp.post)?.value ?? '__current__'}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={(event) => {
+                                    if (event.target.value === '__current__') {
+                                      return;
+                                    }
+                                    assignScheduleEmployeeToPost(emp, event.target.value);
+                                  }}
+                                  className="mt-1 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-600 max-w-[220px]"
+                                >
+                                  {!schedulePostOptions.find((option) => option.label === emp.post) && (
+                                    <option value="__current__">{emp.post}</option>
+                                  )}
+                                  {schedulePostOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
                               </div>
                             </div>
                           </td>
