@@ -25,7 +25,7 @@ import {
 type DragCell = { rowId: number; dayIndex: number };
 type ObjectDraft = SecurityObject;
 type PostInstruction = { post: string; instruction: string };
-type ShiftSlotEditorState = { rowId: number; dayIndex: number } | null;
+type ShiftSlotEditorState = { rowId: number; dayIndex: number; objectName: string } | null;
 const defaultObjectTypes = ['Бизнес-центр', 'Торговый центр', 'Жилой комплекс', 'Промзона'];
 const EXPIRING_DAYS_THRESHOLD = 30;
 const khoAmmoReserveBase = 1250;
@@ -74,6 +74,12 @@ const toScheduleShortName = (fullName: string) => {
   if (parts.length === 1) return parts[0];
   const initials = parts.slice(1).map((part) => `${part[0]}.`).join('');
   return `${parts[0]} ${initials}`;
+};
+
+const extractObjectNameFromPost = (post: string) => {
+  if (!post) return 'Резерв';
+  if (!post.includes('(')) return post.trim();
+  return post.slice(0, post.lastIndexOf('(')).trim() || post.trim();
 };
 
 const getWeekStartMonday = (date: Date) => {
@@ -138,6 +144,7 @@ export default function AlphaPortal() {
   const [manualShiftDayIndex, setManualShiftDayIndex] = useState(0);
   const [manualShiftType, setManualShiftType] = useState<ShiftType>('day');
   const [shiftSlotEditor, setShiftSlotEditor] = useState<ShiftSlotEditorState>(null);
+  const [scheduleSlotObjects, setScheduleSlotObjects] = useState<Record<string, string>>({});
   const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getWeekStartMonday(new Date()));
   const [scheduleObjectFilter, setScheduleObjectFilter] = useState<string>('all');
   const [scheduleSearchFilter, setScheduleSearchFilter] = useState('');
@@ -209,6 +216,24 @@ export default function AlphaPortal() {
     setToastMessage(message);
   };
 
+  const getSlotKey = (rowId: number, dayIndex: number) => `${rowId}-${dayIndex}`;
+
+  useEffect(() => {
+    setScheduleSlotObjects((prev) => {
+      const next = { ...prev };
+      schedule.forEach((row) => {
+        const defaultObject = extractObjectNameFromPost(row.post);
+        for (let i = 0; i < weekDays.length; i += 1) {
+          const key = getSlotKey(row.id, i);
+          if (!next[key]) {
+            next[key] = defaultObject;
+          }
+        }
+      });
+      return next;
+    });
+  }, [schedule]);
+
   useEffect(() => {
     setPostAssignments((prev) => {
       const next: Record<number, Record<string, number | null>> = {};
@@ -244,6 +269,7 @@ export default function AlphaPortal() {
     return objectPostOptions.map((option) => ({
       value: `${option.objectId}::${option.postName}`,
       label: `${option.objectName} (${option.postName})`,
+      objectName: option.objectName,
       objectId: option.objectId,
       postName: option.postName,
     }));
@@ -262,6 +288,13 @@ export default function AlphaPortal() {
     setSchedule((prev) =>
       prev.map((row) => (row.id === scheduleRow.id ? { ...row, employeeId: matchedEmployee?.id ?? row.employeeId, post: nextPostLabel } : row))
     );
+    setScheduleSlotObjects((prev) => {
+      const next = { ...prev };
+      for (let i = 0; i < weekDays.length; i += 1) {
+        next[getSlotKey(scheduleRow.id, i)] = selectedOption.objectName;
+      }
+      return next;
+    });
     if (!matchedEmployee) {
       showToast(`Назначение обновлено в графике: ${nextPostLabel}`);
       return;
@@ -518,7 +551,7 @@ export default function AlphaPortal() {
     const names = new Set<string>();
     objects.forEach((objectItem) => names.add(objectItem.name));
     schedule.forEach((row) => {
-      const objectName = row.post.includes('(') ? row.post.slice(0, row.post.lastIndexOf('(')).trim() : row.post.trim();
+      const objectName = extractObjectNameFromPost(row.post);
       if (objectName) {
         names.add(objectName);
       }
@@ -529,7 +562,7 @@ export default function AlphaPortal() {
   const filteredSchedule = useMemo(() => {
     const q = scheduleSearchFilter.trim().toLowerCase();
     return schedule.filter((row) => {
-      const objectName = row.post.includes('(') ? row.post.slice(0, row.post.lastIndexOf('(')).trim() : row.post.trim();
+      const objectName = extractObjectNameFromPost(row.post);
       const objectOk = scheduleObjectFilter === 'all' || objectName === scheduleObjectFilter;
       const queryOk = !q || row.name.toLowerCase().includes(q) || row.post.toLowerCase().includes(q);
       return objectOk && queryOk;
@@ -697,6 +730,7 @@ export default function AlphaPortal() {
   // Функция для рендера бейджа смены (для модуля Графики)
   const renderShiftBadge = (
     shiftType: ShiftType,
+    objectLabel: string,
     dragOptions?: { draggable: boolean; onDragStart: () => void; onDragEnd: () => void; onClick?: () => void }
   ) => {
     const sharedProps = dragOptions?.draggable
@@ -710,13 +744,13 @@ export default function AlphaPortal() {
 
     switch(shiftType) {
       case 'day':
-        return <div {...sharedProps} className="flex items-center justify-center w-full h-10 bg-blue-50 text-blue-600 border border-blue-100 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-blue-100 transition-colors group"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />08:00 - 20:00</div>;
+        return <div {...sharedProps} className="flex flex-col items-center justify-center w-full h-12 bg-blue-50 text-blue-600 border border-blue-100 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-blue-100 transition-colors group"><div className="flex items-center"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />08:00 - 20:00</div><span className="text-[10px] font-medium text-blue-500 truncate w-full px-1 text-center">{objectLabel}</span></div>;
       case 'night':
-        return <div {...sharedProps} className="flex items-center justify-center w-full h-10 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-indigo-100 transition-colors group"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />20:00 - 08:00</div>;
+        return <div {...sharedProps} className="flex flex-col items-center justify-center w-full h-12 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-indigo-100 transition-colors group"><div className="flex items-center"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />20:00 - 08:00</div><span className="text-[10px] font-medium text-indigo-500 truncate w-full px-1 text-center">{objectLabel}</span></div>;
       case '24h':
-        return <div {...sharedProps} className="flex items-center justify-center w-full h-10 bg-[#FFF0ED] text-[#FF7657] border border-[#FF7657]/20 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-[#FF7657]/20 transition-colors group"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />Сутки (24ч)</div>;
+        return <div {...sharedProps} className="flex flex-col items-center justify-center w-full h-12 bg-[#FFF0ED] text-[#FF7657] border border-[#FF7657]/20 rounded-lg text-xs font-bold shadow-sm cursor-grab hover:bg-[#FF7657]/20 transition-colors group"><div className="flex items-center"><GripVertical className="w-3 h-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />Сутки (24ч)</div><span className="text-[10px] font-medium text-[#ff8f75] truncate w-full px-1 text-center">{objectLabel}</span></div>;
       case 'off':
-        return <div {...sharedProps} className="flex items-center justify-center w-full h-10 bg-slate-50 text-slate-400 border border-dashed border-slate-200 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-100 hover:text-slate-600 transition-colors">Выходной</div>;
+        return <div {...sharedProps} className="flex items-center justify-center w-full h-12 bg-slate-50 text-slate-400 border border-dashed border-slate-200 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-100 hover:text-slate-600 transition-colors">Выходной</div>;
       default:
         return <div className="w-full h-10 bg-slate-50 rounded-lg"></div>;
     }
@@ -990,7 +1024,10 @@ export default function AlphaPortal() {
   };
 
   const openShiftSlotEditor = (rowId: number, dayIndex: number) => {
-    setShiftSlotEditor({ rowId, dayIndex });
+    const row = schedule.find((item) => item.id === rowId);
+    const fallbackObject = row ? extractObjectNameFromPost(row.post) : 'Резерв';
+    const currentObject = scheduleSlotObjects[getSlotKey(rowId, dayIndex)] ?? fallbackObject;
+    setShiftSlotEditor({ rowId, dayIndex, objectName: currentObject });
   };
 
   const applyShiftToSlot = (shiftType: ShiftType) => {
@@ -1007,6 +1044,11 @@ export default function AlphaPortal() {
         return { ...row, shifts, hours: calculateHours(shifts) };
       })
     );
+    setScheduleSlotObjects((prev) => ({
+      ...prev,
+      [getSlotKey(shiftSlotEditor.rowId, shiftSlotEditor.dayIndex)]:
+        shiftType === 'off' ? '' : shiftSlotEditor.objectName,
+    }));
     setShiftSlotEditor(null);
     showToast('Смена обновлена');
   };
@@ -1038,6 +1080,18 @@ export default function AlphaPortal() {
       nextSchedule[targetRowIndex].hours = calculateHours(nextSchedule[targetRowIndex].shifts);
 
       return nextSchedule;
+    });
+
+    setScheduleSlotObjects((prev) => {
+      const sourceKey = getSlotKey(draggedCell.rowId, draggedCell.dayIndex);
+      const targetKey = getSlotKey(targetRowId, targetDayIndex);
+      const sourceObject = prev[sourceKey] ?? '';
+      const targetObject = prev[targetKey] ?? '';
+      return {
+        ...prev,
+        [sourceKey]: targetObject,
+        [targetKey]: sourceObject,
+      };
     });
 
     setDraggedCell(null);
@@ -1785,12 +1839,16 @@ export default function AlphaPortal() {
                                 draggedCell ? 'hover:bg-emerald-50/70' : ''
                               }`}
                             >
-                              {renderShiftBadge(shift, {
+                              {renderShiftBadge(
+                                shift,
+                                scheduleSlotObjects[getSlotKey(emp.id, idx)] ?? extractObjectNameFromPost(emp.post),
+                                {
                                 draggable: shift !== 'off',
                                 onDragStart: () => onShiftDragStart(emp.id, idx),
                                 onDragEnd: () => setDraggedCell(null),
                                 onClick: () => openShiftSlotEditor(emp.id, idx),
-                              })}
+                              }
+                              )}
                             </td>
                           ))}
                           <td className="p-4 text-center font-bold text-slate-700">
@@ -2565,8 +2623,25 @@ export default function AlphaPortal() {
               </button>
             </div>
             <p className="text-sm text-slate-500 mb-4">
-              {weekDays[shiftSlotEditor.dayIndex]?.day} {weekDays[shiftSlotEditor.dayIndex]?.date}
+              {scheduleWeekDays[shiftSlotEditor.dayIndex]?.day} {scheduleWeekDays[shiftSlotEditor.dayIndex]?.date}
             </p>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+              Объект на слоте
+              <select
+                value={shiftSlotEditor.objectName}
+                onChange={(event) =>
+                  setShiftSlotEditor((prev) =>
+                    prev ? { ...prev, objectName: event.target.value } : prev
+                  )
+                }
+                className="mt-2 w-full bg-[#F5F6F9] border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700"
+              >
+                <option value="Резерв">Резерв</option>
+                {scheduleObjectOptions.map((objectName) => (
+                  <option key={objectName} value={objectName}>{objectName}</option>
+                ))}
+              </select>
+            </label>
             <div className="grid grid-cols-1 gap-2">
               <button onClick={() => applyShiftToSlot('day')} className="text-left px-3 py-2 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 font-semibold">День (08:00-20:00)</button>
               <button onClick={() => applyShiftToSlot('night')} className="text-left px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700 font-semibold">Ночь (20:00-08:00)</button>
