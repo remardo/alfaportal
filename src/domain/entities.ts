@@ -53,6 +53,7 @@ export interface WeekDay {
 
 export interface ScheduleEntry {
   id: number;
+  employeeId?: number;
   name: string;
   post: string;
   shifts: ShiftType[];

@@ -125,6 +125,8 @@ export default function AlphaPortal() {
   const [khoForm, setKhoForm] = useState({ employeeId: '', weaponId: '', ammo: '16' });
   const [khoFilterQuery, setKhoFilterQuery] = useState('');
   const [showKhoArchive, setShowKhoArchive] = useState(false);
+  const [manualShiftDayIndex, setManualShiftDayIndex] = useState(0);
+  const [manualShiftType, setManualShiftType] = useState<ShiftType>('day');
   const [isEmployeeCreateOpen, setIsEmployeeCreateOpen] = useState(false);
   const [newEmployeeDraft, setNewEmployeeDraft] = useState({
     name: '',
@@ -240,12 +242,11 @@ export default function AlphaPortal() {
       return;
     }
     const nextPostLabel = selectedOption.label;
-    setSchedule((prev) =>
-      prev.map((row) => (row.id === scheduleRow.id ? { ...row, post: nextPostLabel } : row))
-    );
-
     const matchedEmployee = employees.find(
       (employee) => employee.name === scheduleRow.name || toScheduleShortName(employee.name) === scheduleRow.name
+    );
+    setSchedule((prev) =>
+      prev.map((row) => (row.id === scheduleRow.id ? { ...row, employeeId: matchedEmployee?.id ?? row.employeeId, post: nextPostLabel } : row))
     );
     if (!matchedEmployee) {
       showToast(`Назначение обновлено в графике: ${nextPostLabel}`);
@@ -274,6 +275,44 @@ export default function AlphaPortal() {
     });
 
     showToast(`Сотрудник назначен: ${matchedEmployee.name} -> ${nextPostLabel}`);
+  };
+
+  const findScheduleRowForEmployee = (employee: Employee) => {
+    return schedule.find(
+      (row) =>
+        row.employeeId === employee.id ||
+        row.name === employee.name ||
+        row.name === toScheduleShortName(employee.name)
+    );
+  };
+
+  const updateEmployeeSchedule = (
+    employee: Employee,
+    updater: (current: ScheduleEntry) => ScheduleEntry
+  ) => {
+    setSchedule((prev) => {
+      const index = prev.findIndex(
+        (row) =>
+          row.employeeId === employee.id ||
+          row.name === employee.name ||
+          row.name === toScheduleShortName(employee.name)
+      );
+      if (index < 0) {
+        const nextId = prev.length ? Math.max(...prev.map((row) => row.id)) + 1 : 1;
+        const base: ScheduleEntry = {
+          id: nextId,
+          employeeId: employee.id,
+          name: toScheduleShortName(employee.name),
+          post: employee.post,
+          shifts: weekDays.map(() => 'off' as ShiftType),
+          hours: 0,
+        };
+        return [...prev, updater(base)];
+      }
+      const next = [...prev];
+      next[index] = updater({ ...next[index], shifts: [...next[index].shifts], employeeId: employee.id });
+      return next;
+    });
   };
 
   const getDateDiffInDays = (date: string) => {
@@ -428,6 +467,18 @@ export default function AlphaPortal() {
     }
     return tasks;
   }, [emptyPosts, highRiskDocuments, issuedWeaponsCount, mediumRiskDocuments]);
+
+  const selectedEmployeeSchedule = useMemo(() => {
+    if (!selectedEmployee) {
+      return null;
+    }
+    return findScheduleRowForEmployee(selectedEmployee) ?? null;
+  }, [selectedEmployee, schedule]);
+
+  const selectedEmployeeWeeklyShiftCount = selectedEmployeeSchedule
+    ? selectedEmployeeSchedule.shifts.filter((shift) => shift !== 'off').length
+    : 0;
+  const selectedEmployeeMonthlyShiftCount = Math.round(selectedEmployeeWeeklyShiftCount * 4.33);
 
   const selectedKhoEmployee = useMemo(() => {
     const employeeId = Number(khoForm.employeeId);
@@ -675,6 +726,7 @@ export default function AlphaPortal() {
       const nextScheduleId = schedule.length ? Math.max(...schedule.map((row) => row.id)) + 1 : 1;
       const scheduleEntry: ScheduleEntry = {
         id: nextScheduleId,
+        employeeId: createdEmployee.id,
         name: toScheduleShortName(createdEmployee.name),
         post: createdEmployee.post,
         shifts,
@@ -693,9 +745,38 @@ export default function AlphaPortal() {
       return;
     }
     setEmployees((prev) => prev.map((employee) => (employee.id === profileDraft.id ? profileDraft : employee)));
+    setSchedule((prev) =>
+      prev.map((row) =>
+        row.employeeId === profileDraft.id ||
+        row.name === profileDraft.name ||
+        row.name === toScheduleShortName(profileDraft.name)
+          ? { ...row, employeeId: profileDraft.id, name: toScheduleShortName(profileDraft.name), post: profileDraft.post }
+          : row
+      )
+    );
     setSelectedEmployee(profileDraft);
     setIsProfileEditOpen(false);
     showToast('Профиль сотрудника сохранен');
+  };
+
+  const setProfileShift = (employee: Employee, dayIndex: number, shiftType: ShiftType) => {
+    updateEmployeeSchedule(employee, (current) => {
+      const shifts = [...current.shifts];
+      shifts[dayIndex] = shiftType;
+      return {
+        ...current,
+        employeeId: employee.id,
+        name: toScheduleShortName(employee.name),
+        post: employee.post,
+        shifts,
+        hours: calculateHours(shifts),
+      };
+    });
+  };
+
+  const addManualShiftForEmployee = (employee: Employee) => {
+    setProfileShift(employee, manualShiftDayIndex, manualShiftType);
+    showToast(`Смена добавлена: ${weekDays[manualShiftDayIndex].day} (${manualShiftType})`);
   };
 
   const openObjectPassport = (objectItem: SecurityObject) => {
@@ -1155,6 +1236,73 @@ export default function AlphaPortal() {
                         <div>
                           <p className="text-xs text-slate-400 font-semibold mb-1 uppercase tracking-wider">Контактный телефон</p>
                           <p className="text-sm font-medium text-slate-800">{selectedEmployee.phone}</p>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                        <p className="text-xs text-slate-500 font-semibold uppercase">Смены сотрудника</p>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="bg-white border border-slate-200 rounded-lg p-2">
+                            <p className="text-slate-400">Смен в неделю</p>
+                            <p className="text-sm font-bold text-slate-800">{selectedEmployeeWeeklyShiftCount}</p>
+                          </div>
+                          <div className="bg-white border border-slate-200 rounded-lg p-2">
+                            <p className="text-slate-400">Смен в месяц</p>
+                            <p className="text-sm font-bold text-slate-800">~ {selectedEmployeeMonthlyShiftCount}</p>
+                          </div>
+                          <div className="bg-white border border-slate-200 rounded-lg p-2 col-span-2">
+                            <p className="text-slate-400">Часов в неделю</p>
+                            <p className="text-sm font-bold text-slate-800">{selectedEmployeeSchedule?.hours ?? 0} ч</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {weekDays.map((day, dayIndex) => (
+                            <div key={dayIndex} className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-slate-500 w-14">{day.day} {day.date}</span>
+                              <select
+                                value={selectedEmployeeSchedule?.shifts[dayIndex] ?? 'off'}
+                                onChange={(event) => setProfileShift(selectedEmployee, dayIndex, event.target.value as ShiftType)}
+                                className="flex-1 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
+                              >
+                                <option value="off">Выходной</option>
+                                <option value="day">День (08:00-20:00)</option>
+                                <option value="night">Ночь (20:00-08:00)</option>
+                                <option value="24h">Сутки (24ч)</option>
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200/70">
+                          <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold mb-2">Ручное добавление смены</p>
+                          <div className="flex gap-2">
+                            <select
+                              value={manualShiftDayIndex}
+                              onChange={(event) => setManualShiftDayIndex(Number(event.target.value))}
+                              className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
+                            >
+                              {weekDays.map((day, dayIndex) => (
+                                <option key={dayIndex} value={dayIndex}>{day.day} {day.date}</option>
+                              ))}
+                            </select>
+                            <select
+                              value={manualShiftType}
+                              onChange={(event) => setManualShiftType(event.target.value as ShiftType)}
+                              className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700"
+                            >
+                              <option value="day">День</option>
+                              <option value="night">Ночь</option>
+                              <option value="24h">Сутки</option>
+                              <option value="off">Выходной</option>
+                            </select>
+                            <button
+                              onClick={() => addManualShiftForEmployee(selectedEmployee)}
+                              className="px-2 py-1 text-xs font-bold bg-[#FF7657] text-white rounded-lg hover:bg-[#e8664a]"
+                            >
+                              Добавить
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
