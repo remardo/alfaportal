@@ -13,7 +13,6 @@ import type { Employee, LicenseStatus, ScheduleEntry, SecurityObject, ShiftType 
 import { InMemoryEmployeeRepository } from './src/adapters/repositories/in-memory-employee-repository';
 import { SearchEmployeesUseCase } from './src/use-cases/search-employees';
 import {
-  dashboardStats,
   mockEmployees,
   mockIntegrations,
   mockJournal,
@@ -244,6 +243,61 @@ export default function AlphaPortal() {
 
     return alerts.sort((a, b) => a.daysLeft - b.daysLeft);
   }, [employees]);
+
+  const activePostsCount = useMemo(
+    () => objects.reduce((sum, objectItem) => sum + objectItem.postsCount, 0),
+    [objects]
+  );
+  const staffedPosts = schedule.length;
+  const emptyPosts = Math.max(activePostsCount - staffedPosts, 0);
+  const highRiskDocuments = complianceAlerts.filter((alertItem) => alertItem.level === 'expired').length;
+  const mediumRiskDocuments = complianceAlerts.filter((alertItem) => alertItem.level === 'expiring').length;
+  const issuedWeaponsCount = khoWeapons.filter((weapon) => !weapon.inKho).length;
+
+  const dashboardTasks = useMemo(() => {
+    const tasks: Array<{ id: string; title: string; desc: string; severity: 'high' | 'medium' | 'low' }> = [];
+    if (highRiskDocuments > 0) {
+      tasks.push({
+        id: 'docs-expired',
+        title: 'Просроченные документы',
+        desc: `${highRiskDocuments} документов требуют немедленного отстранения/замены.`,
+        severity: 'high',
+      });
+    }
+    if (emptyPosts > 0) {
+      tasks.push({
+        id: 'empty-posts',
+        title: 'Незаполненные посты',
+        desc: `${emptyPosts} постов в текущем контуре без закрепленного сотрудника.`,
+        severity: 'high',
+      });
+    }
+    if (issuedWeaponsCount > 0) {
+      tasks.push({
+        id: 'weapons-control',
+        title: 'Контроль оружия на руках',
+        desc: `${issuedWeaponsCount} ед. вооружения выданы, требуется контроль возврата по сменам.`,
+        severity: 'medium',
+      });
+    }
+    if (mediumRiskDocuments > 0) {
+      tasks.push({
+        id: 'docs-expiring',
+        title: 'Скорые истечения документов',
+        desc: `${mediumRiskDocuments} документов истекают в ближайшие 30 дней.`,
+        severity: 'medium',
+      });
+    }
+    if (!tasks.length) {
+      tasks.push({
+        id: 'stable',
+        title: 'Операционная стабильность',
+        desc: 'Критичных задач не найдено. Выполняйте плановые проверки.',
+        severity: 'low',
+      });
+    }
+    return tasks;
+  }, [emptyPosts, highRiskDocuments, issuedWeaponsCount, mediumRiskDocuments]);
 
   const selectedKhoEmployee = useMemo(() => {
     const employeeId = Number(khoForm.employeeId);
@@ -923,84 +977,134 @@ export default function AlphaPortal() {
             {/* --- МОДУЛЬ ДАШБОРДА --- */}
             {activeTab === 'дашборд' && (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* Карточки KPI */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {dashboardStats.map((stat) => (
-                    <div key={stat.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col hover:shadow-md transition-shadow">
-                      <div className="flex justify-between items-start mb-4">
-                        <div className={`p-3 rounded-2xl ${stat.id === 1 ? 'bg-[#FFF0ED] text-[#FF7657]' : 'bg-slate-50 text-slate-500'}`}>
-                          <stat.icon className="w-6 h-6" />
-                        </div>
-                        <span className={`flex items-center text-xs font-bold px-2 py-1 rounded-lg ${stat.isPositive ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-                          {stat.isPositive ? <ArrowUpRight className="w-3 h-3 mr-1" /> : <ArrowDownRight className="w-3 h-3 mr-1" />}
-                          {stat.trend}
-                        </span>
-                      </div>
-                      <div>
-                        <h4 className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">{stat.title}</h4>
-                        <p className="text-2xl font-black text-slate-800">{stat.value}</p>
-                      </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs uppercase tracking-wider font-bold text-slate-400">Посты под охраной</p>
+                      <Shield className="w-4 h-4 text-slate-400" />
                     </div>
-                  ))}
+                    <p className="text-2xl font-black text-slate-800">{staffedPosts} / {activePostsCount}</p>
+                    <p className={`text-sm font-semibold mt-1 ${emptyPosts > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {emptyPosts > 0 ? `${emptyPosts} требуют закрытия` : 'Все посты закрыты'}
+                    </p>
+                  </div>
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs uppercase tracking-wider font-bold text-slate-400">Контроль допусков</p>
+                      <AlertTriangle className="w-4 h-4 text-slate-400" />
+                    </div>
+                    <p className="text-2xl font-black text-slate-800">{highRiskDocuments + mediumRiskDocuments}</p>
+                    <p className="text-sm font-semibold mt-1 text-slate-600">
+                      <span className="text-red-600">{highRiskDocuments} просрочено</span>, <span className="text-yellow-600">{mediumRiskDocuments} истекает</span>
+                    </p>
+                  </div>
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs uppercase tracking-wider font-bold text-slate-400">Оружие на руках</p>
+                      <Target className="w-4 h-4 text-slate-400" />
+                    </div>
+                    <p className="text-2xl font-black text-slate-800">{issuedWeaponsCount}</p>
+                    <p className="text-sm font-semibold mt-1 text-slate-600">В КХО: {khoWeapons.filter((weapon) => weapon.inKho).length}</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs uppercase tracking-wider font-bold text-slate-400">Авто-уведомления</p>
+                      <Bell className="w-4 h-4 text-slate-400" />
+                    </div>
+                    <p className="text-2xl font-black text-slate-800">{complianceAlerts.length}</p>
+                    <p className="text-sm font-semibold mt-1 text-slate-600">Кадры и лицензии</p>
+                  </div>
                 </div>
 
-                {/* Основной контент дашборда (Графики и Уведомления) */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  
-                  {/* Левая колонка: График (Имитация) */}
-                  <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-                    <div className="flex justify-between items-center mb-6">
-                      <h3 className="text-lg font-bold text-slate-800">Динамика объектов и прибыли</h3>
-                      <button className="text-sm font-semibold text-[#FF7657] hover:bg-[#FFF0ED] px-3 py-1.5 rounded-xl transition-colors">Отчет (PDF)</button>
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                  <div className="xl:col-span-2 bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-bold text-slate-800">Приоритетные задачи смены</h3>
+                      <button
+                        onClick={() => setActiveTab('кадры')}
+                        className="text-sm font-semibold text-[#FF7657] hover:bg-[#FFF0ED] px-3 py-1.5 rounded-xl transition-colors"
+                      >
+                        Открыть кадровый модуль
+                      </button>
                     </div>
-                    {/* CSS Имитация графика */}
-                    <div className="h-64 flex items-end justify-between gap-2 mt-4 pt-4 border-b border-slate-100">
-                      {[40, 55, 45, 70, 65, 85, 95, 80, 100].map((h, i) => (
-                        <div key={i} className="w-full bg-slate-100 rounded-t-lg relative group transition-all hover:bg-[#FFF0ED]" style={{ height: `${h}%` }}>
-                          <div className={`absolute bottom-0 w-full rounded-t-lg transition-all duration-500 ${h > 70 ? 'bg-[#FF7657]' : 'bg-[#FF7657]/40'}`} style={{ height: `${h * 0.7}%` }}></div>
-                          {/* Tooltip */}
-                          <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                            Месяц {i + 1}
-                          </div>
+                    <div className="space-y-3">
+                      {dashboardTasks.map((task) => (
+                        <div key={task.id} className={`p-4 rounded-2xl border ${
+                          task.severity === 'high'
+                            ? 'bg-red-50 border-red-100'
+                            : task.severity === 'medium'
+                              ? 'bg-yellow-50 border-yellow-100'
+                              : 'bg-green-50 border-green-100'
+                        }`}>
+                          <p className="text-sm font-bold text-slate-800 mb-1">{task.title}</p>
+                          <p className="text-xs text-slate-600 leading-relaxed">{task.desc}</p>
                         </div>
                       ))}
                     </div>
-                    <div className="flex justify-between text-xs font-semibold text-slate-400 mt-3 px-2">
-                      <span>Янв</span><span>Фев</span><span>Мар</span><span>Апр</span><span>Май</span><span>Июн</span><span>Июл</span><span>Авг</span><span>Сен</span>
+
+                    <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <button onClick={() => setActiveTab('графики')} className="w-full px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">
+                        Графики и замены
+                      </button>
+                      <button onClick={() => setActiveTab('кхо')} className="w-full px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">
+                        Процессы КХО
+                      </button>
+                      <button onClick={() => setActiveTab('объекты')} className="w-full px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">
+                        Объекты и посты
+                      </button>
                     </div>
                   </div>
 
-                  {/* Правая колонка: Оперативные сводки */}
                   <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col">
-                    <h3 className="text-lg font-bold text-slate-800 mb-6">Оперативная сводка</h3>
-                    
-                    <div className="flex-1 space-y-4">
-                      {recentAlerts.map((alert) => (
-                        <div key={alert.id} className="flex p-4 rounded-2xl border border-slate-50 hover:bg-slate-50 transition-colors group">
-                          <div className={`p-3 rounded-xl mr-4 h-fit ${alert.color}`}>
-                            <alert.icon className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <div className="flex justify-between items-start mb-1">
-                              <h4 className="text-sm font-bold text-slate-800">{alert.title}</h4>
-                            </div>
-                            <p className="text-xs font-medium text-slate-500 leading-snug mb-2">{alert.desc}</p>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{alert.time}</span>
-                          </div>
+                    <h3 className="text-lg font-bold text-slate-800 mb-4">Ближайшие риски по документам</h3>
+                    <div className="space-y-2 max-h-[380px] overflow-auto">
+                      {complianceAlerts.slice(0, 10).map((alertItem) => (
+                        <div key={alertItem.id} className={`p-3 rounded-xl border ${
+                          alertItem.level === 'expired'
+                            ? 'bg-red-50 border-red-100'
+                            : 'bg-yellow-50 border-yellow-100'
+                        }`}>
+                          <p className="text-xs font-bold text-slate-800 mb-0.5">{alertItem.employeeName}</p>
+                          <p className="text-xs text-slate-600">{alertItem.documentLabel}: {alertItem.date}</p>
+                          <p className={`text-[11px] font-bold mt-1 ${alertItem.level === 'expired' ? 'text-red-700' : 'text-yellow-700'}`}>
+                            {alertItem.level === 'expired' ? 'Просрочено' : `Осталось ${alertItem.daysLeft} дн.`}
+                          </p>
                         </div>
                       ))}
+                      {complianceAlerts.length === 0 && (
+                        <div className="p-3 rounded-xl border bg-green-50 border-green-100">
+                          <p className="text-xs font-semibold text-green-700">Критических рисков не обнаружено</p>
+                        </div>
+                      )}
                     </div>
-
-                    <button className="w-full mt-4 py-3 bg-[#F5F6F9] text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">
-                      Смотреть все события
+                    <button
+                      onClick={() => setActiveTab('кадры')}
+                      className="w-full mt-4 py-3 bg-[#F5F6F9] text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors"
+                    >
+                      Перейти в Кадры и Лицензии
                     </button>
                   </div>
+                </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <p className="text-xs uppercase tracking-wider text-slate-400 font-bold mb-2">Сменный контур</p>
+                    <p className="text-2xl font-black text-slate-800 mb-1">{schedule.length}</p>
+                    <p className="text-sm text-slate-500">сотрудников в активном графике на неделю</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <p className="text-xs uppercase tracking-wider text-slate-400 font-bold mb-2">Объекты в реестре</p>
+                    <p className="text-2xl font-black text-slate-800 mb-1">{objects.length}</p>
+                    <p className="text-sm text-slate-500">объектов, {activePostsCount} постов охраны</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <p className="text-xs uppercase tracking-wider text-slate-400 font-bold mb-2">Журнал КХО</p>
+                    <p className="text-2xl font-black text-slate-800 mb-1">{khoJournal.length}</p>
+                    <p className="text-sm text-slate-500">операций в книге приема-выдачи</p>
+                  </div>
                 </div>
               </div>
             )}
-
-            {/* --- МОДУЛЬ ОБЪЕКТЫ И ПОСТЫ --- */}
             {activeTab === 'объекты' && (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
